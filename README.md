@@ -63,7 +63,7 @@ To simulate the hardware design, ensure you have **Icarus Verilog** installed, t
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/yourusername/structura-8.git](https://github.com/yourusername/structura-8.git)
+    git clone [https://github.com/theonlymosmos/structura-8.git](https://github.com/yourusername/structura-8.git)
     ```
 
 2.  **Compile the Design:**
