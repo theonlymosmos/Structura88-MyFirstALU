@@ -1,0 +1,195 @@
+// ==========================================
+// PART 1: HELPER MODULES
+// ==========================================
+
+// 1. Simple 2-to-1 Mux 
+// Allowed: TA said "We can use ternary op in small mux"
+module mux2_8(input [7:0] in0, in1, input sel, output [7:0] out);
+    assign out = sel ? in1 : in0; 
+endmodule
+
+// 2. 4-to-1 Mux
+// Allowed: TA said "We can use ternary op in small mux"
+// Logic: If sel[1] is 0, pick between in0/in1. If sel[1] is 1, pick between in2/in3.
+module mux4_8(input [7:0] in0, in1, in2, in3, input [1:0] sel, output [7:0] out);
+    assign out = sel[1] ? (sel[0] ? in3 : in2) : (sel[0] ? in1 : in0);
+endmodule
+
+// 3. 16-to-1 Mux (BUILT STRUCTURALLY)
+// Requirement: "Do the 16x1 mux using 2x1 and 4x1"
+// Implementation: We use a "Tree" of 4-to-1 Muxes.
+module mux16_8(
+    input [7:0] d0, d1, d2, d3, d4, d5, d6, d7,
+    input [7:0] d8, d9, d10, d11, d12, d13, d14, d15,
+    input [3:0] sel,
+    output [7:0] out
+);
+    wire [7:0] w0, w1, w2, w3;
+
+    // Stage 1: Select based on the lower 2 bits (sel[1:0])
+    mux4_8 m0 (.in0(d0),  .in1(d1),  .in2(d2),  .in3(d3),  .sel(sel[1:0]), .out(w0));
+    mux4_8 m1 (.in0(d4),  .in1(d5),  .in2(d6),  .in3(d7),  .sel(sel[1:0]), .out(w1));
+    mux4_8 m2 (.in0(d8),  .in1(d9),  .in2(d10), .in3(d11), .sel(sel[1:0]), .out(w2));
+    mux4_8 m3 (.in0(d12), .in1(d13), .in2(d14), .in3(d15), .sel(sel[1:0]), .out(w3));
+
+    // Stage 2: Select the winner based on the upper 2 bits (sel[3:2])
+    mux4_8 m_final (.in0(w0), .in1(w1), .in2(w2), .in3(w3), .sel(sel[3:2]), .out(out));
+endmodule
+
+// 4. 8-bit Adder
+module adder_8(input [7:0] a, b, input cin, output [7:0] sum, output cout);
+    wire [8:0] temp_sum;
+    assign temp_sum = {1'b0, a} + {1'b0, b} + cin; 
+    assign sum = temp_sum[7:0];
+    assign cout = temp_sum[8];
+endmodule
+
+
+// ==========================================
+// PART 2: MAIN ALU MODULE
+// ==========================================
+
+module ALU_8 (output [7:0] Result, output Zero, Negative, Overflow, input [7:0] A, B, input [3:0] AluOp);
+
+    // --- Arithmetic Block Wires ---
+    wire [7:0] src1, src2;
+    wire [7:0] adder_result;
+    wire [7:0] not_A, not_B, zero_const;
+    wire cin_bit, mux1_sel;
+    wire [1:0] mux2_sel;
+    wire unused_cout;
+
+    assign not_A = ~A;
+    assign not_B = ~B;
+    assign zero_const = 8'b0;
+
+    // Control Logic
+    assign mux1_sel = AluOp[0] & ~AluOp[2];
+    assign mux2_sel[0] = AluOp[0];
+    assign mux2_sel[1] = AluOp[1] | AluOp[2];
+    assign cin_bit = |AluOp; 
+
+    // Instantiate Arithmetic Muxes
+    mux2_8 input_mux1 (.in0(A), .in1(B), .sel(mux1_sel), .out(src1));
+    mux4_8 input_mux2 (.in0(B), .in1(not_A), .in2(zero_const), .in3(not_B), .sel(mux2_sel), .out(src2));
+    
+    // Shared Adder
+    adder_8 alu_adder (.a(src1), .b(src2), .cin(cin_bit), .sum(adder_result), .cout(unused_cout));
+
+    // Arithmetic Results
+    wire [7:0] math_add, math_sub, math_inc, math_cmp;
+    assign math_add = adder_result;
+    assign math_sub = adder_result;
+    assign math_inc = adder_result;
+    assign math_cmp = (adder_result == 8'b0) ? 8'b1 : 8'b0;
+
+    // Shift & Rotate Results (Wiring)
+    wire [7:0] res_shl, res_shr, res_rotl, res_rotr;
+    assign res_shl  = {B[6:0], 1'b0}; 
+    assign res_shr  = {B[7], B[7:1]};
+    assign res_rotl = {A[6:0], A[7]};
+    assign res_rotr = {A[0], A[7:1]};
+
+    // Logic Unit Results (Gates)
+    wire [7:0] res_not, res_and, res_or, res_nand;
+    assign res_not  = ~A;
+    assign res_and  = A & B;
+    assign res_or   = A | B;
+    assign res_nand = ~(A & B);
+
+    // Final Result Mux (Structural 16-to-1)
+    // Now built from mux4 instances - NO CASE STATEMENT HERE.
+    mux16_8 result_mux (
+        .d0(math_add), .d1(math_sub), .d2(math_inc), .d3(8'b0),
+        .d4(8'b0), .d5(math_cmp), .d6(res_shl), .d7(res_shr),
+        .d8(res_not), .d9(res_and), .d10(res_or), .d11(res_nand),
+        .d12(res_rotl), .d13(res_rotr), .d14(8'b0), .d15(8'b0),
+        .sel(AluOp), 
+        .out(Result)
+    );
+
+    // Flags
+    assign Zero = (Result == 8'b0);
+    assign Negative = Result[7];
+    wire is_math_op;
+    assign is_math_op = (AluOp[3] == 0) && (AluOp[2] == 0);
+    assign Overflow = is_math_op ? (~(src1[7] ^ src2[7]) & (src1[7] ^ adder_result[7])) : 1'b0;
+
+endmodule
+
+
+// ==========================================
+// PART 3: TESTBENCH
+// ==========================================
+
+module tb_ALU_8();
+    reg [7:0] A, B;
+    reg [3:0] AluOp;
+    wire [7:0] Result;
+    wire Zero, Negative, Overflow;
+    
+    integer pass_count = 0;
+    integer fail_count = 0;
+
+    ALU_8 uut (
+        .Result(Result), .Zero(Zero), .Negative(Negative), .Overflow(Overflow),
+        .A(A), .B(B), .AluOp(AluOp)
+    );
+
+    task check;
+        input [8*25:1] test_desc;
+        input [7:0] exp_res;
+        input exp_z, exp_n, exp_o;
+        begin
+            #10;
+            $display("---------------------------------------------------");
+            $display("TEST: %0s | Op: %b", test_desc, AluOp);
+            $display("   IN: A=%d, B=%d  ->  OUT: Res=%d (Hex:%h)", A, B, Result, Result);
+            
+            if (Result === exp_res && Zero === exp_z && Negative === exp_n && Overflow === exp_o) begin
+                $display("   STATUS: [PASS] Flags: Z=%b N=%b O=%b", Zero, Negative, Overflow);
+                pass_count = pass_count + 1;
+            end else begin
+                $display("   STATUS: [FAIL] Expected: %d, Got: %d", exp_res, Result);
+                $display("           Flags Exp: Z=%b N=%b O=%b", exp_z, exp_n, exp_o);
+                $display("           Flags Got: Z=%b N=%b O=%b", Zero, Negative, Overflow);
+                fail_count = fail_count + 1;
+            end
+        end
+    endtask
+
+    initial begin
+        $display("\n=======================================");
+        $display("   STARTING ALU 100%% COVERAGE TEST");
+        $display("=======================================\n");
+
+        // Arithmetic
+        A=10; B=5; AluOp=4'b0000; check("ADD (10+5)", 15, 0, 0, 0);
+        A=5; B=20; AluOp=4'b0001; check("SUB (20-5)", 15, 0, 0, 0);
+        A=10; B=99; AluOp=4'b0010; check("INC (10+1)", 11, 0, 0, 0);
+        A=55; B=55; AluOp=4'b0101; check("CMP TRUE", 1, 0, 0, 0);
+        A=55; B=10; AluOp=4'b0101; check("CMP FALSE", 0, 1, 0, 0);
+
+        // Shift
+        A=0; B=3; AluOp=4'b0110; check("SHL (3<<1)", 6, 0, 0, 0);
+        A=0; B=8'b11111100; AluOp=4'b0111; check("SHR (-4>>1)", 8'b11111110, 0, 1, 0);
+
+        // Rotate
+        A=128; B=0; AluOp=4'b1100; check("ROT L (128->1)", 1, 0, 0, 0);
+        A=1; B=0; AluOp=4'b1101; check("ROT R (1->128)", 128, 0, 1, 0);
+
+        // Logic
+        A=0; B=0; AluOp=4'b1000; check("NOT (~0)", 255, 0, 1, 0);
+        A=8'h0F; B=8'hF0; AluOp=4'b1001; check("AND (0F & F0)", 0, 1, 0, 0);
+        A=10; B=5; AluOp=4'b1010; check("OR (10 | 5)", 15, 0, 0, 0);
+        A=255; B=255; AluOp=4'b1011; check("NAND (FF & FF)", 0, 1, 0, 0);
+
+        // Flags
+        A=127; B=1; AluOp=4'b0000; check("OVERFLOW", 128, 0, 1, 1);
+
+        $display("\n=======================================");
+        $display("FINAL REPORT: %0d Passed, %0d Failed", pass_count, fail_count);
+        $display("=======================================");
+        $finish;
+    end
+endmodule
